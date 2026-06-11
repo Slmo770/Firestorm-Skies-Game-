@@ -30,7 +30,7 @@
 'use strict';
 
 /* ── ⚙️  YOUR SUPABASE CREDENTIALS — FILL THESE IN ─────────────── */
-const SUPABASE_URL      = 'https://dkveqztlrovnwpmqndvc.supabase.co/rest/v1/';
+const SUPABASE_URL      = 'https://dkveqztlrovnwpmqndvc.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrdmVxenRscm92bndwbXFuZHZjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExODk1OTgsImV4cCI6MjA5Njc2NTU5OH0.TGQocuWMDGMxooexHHThibH3afqBz68KiHVE7QPB3P8';
 /* ─────────────────────────────────────────────────────────────────── */
 
