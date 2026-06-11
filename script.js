@@ -1209,12 +1209,17 @@ class Game {
     this.waveAnnounceEl = null;
     this.powerUpDropChance = 0.12;
 
-    this.$startMenu      = document.getElementById('startMenu');
-    this.$gameOver       = document.getElementById('gameOverScreen');
-    this.$pause          = document.getElementById('pauseScreen');
-    this.$hud            = document.getElementById('hud');
-    this.$powerupHud     = document.getElementById('powerupHud');
-    this.$mobileControls = document.getElementById('mobileControls');
+    this.$startMenu        = document.getElementById('startMenu');
+    this.$gameOver         = document.getElementById('gameOverScreen');
+    this.$pause            = document.getElementById('pauseScreen');
+    this.$hud              = document.getElementById('hud');
+    this.$powerupHud       = document.getElementById('powerupHud');
+    this.$mobileControls   = document.getElementById('mobileControls');
+    this.$nicknameModal    = document.getElementById('nicknameModal');
+    this.$leaderboardScreen= document.getElementById('leaderboardScreen');
+
+    // Player nickname — persisted across sessions
+    this.nickname = localStorage.getItem('apexNickname') || '';
 
     this._resize();
     this._bindEvents();
@@ -1239,6 +1244,20 @@ class Game {
     this.lastTime = ts;
     this.starField.update(dt);
     this.starField.draw(this.ctx);
+  }
+
+  // Show nickname modal before actually starting (skip if nickname already set)
+  _promptAndStart() {
+    this.audio.resume();
+    if (this.nickname && this.nickname.length >= 2) {
+      // Already have a nickname — start directly
+      this._startGame();
+      return;
+    }
+    // Show nickname modal
+    this.$startMenu.classList.add('hidden');
+    this.$nicknameModal.classList.remove('hidden');
+    setTimeout(() => document.getElementById('nicknameInput').focus(), 100);
   }
 
   _startGame() {
@@ -1280,6 +1299,11 @@ class Game {
     this.$hud.classList.add('hidden');
     this.$powerupHud.classList.add('hidden');
     this.$mobileControls.classList.add('hidden');
+    this.$nicknameModal.classList.add('hidden');
+    this.$leaderboardScreen.classList.add('hidden');
+    // Refresh saved nickname in input
+    const inp = document.getElementById('nicknameInput');
+    if (inp && this.nickname) inp.value = this.nickname;
   }
 
   _gameOver() {
@@ -1296,12 +1320,75 @@ class Game {
     document.getElementById('finalKills').textContent = this.kills;
     document.getElementById('finalBest').textContent  = this.bestScore.toLocaleString();
 
-    setTimeout(() => {
+    setTimeout(async () => {
       this.$gameOver.classList.remove('hidden');
       this.$hud.classList.add('hidden');
       this.$powerupHud.classList.add('hidden');
       this.$mobileControls.classList.add('hidden');
+
+      // Submit score to leaderboard and render results
+      await this._submitAndShowLeaderboard(wave);
     }, 1400);
+  }
+
+  async _submitAndShowLeaderboard(wave) {
+    const listEl      = document.getElementById('goLeaderboardList');
+    const rankBadgeEl = document.getElementById('yourRankBadge');
+    const db          = window.leaderboardDB;
+
+    // ── Offline mode ──────────────────────────────────────────
+    if (!db || !db.isReady) {
+      listEl.innerHTML = `
+        <div class="lb-offline-notice">
+          ⚡ Offline mode — configure Supabase in db.js for global rankings
+        </div>`;
+      return;
+    }
+
+    // ── Submitting spinner ────────────────────────────────────
+    listEl.innerHTML = `<div class="lb-submitting"><div class="spinner"></div>SUBMITTING SCORE…</div>`;
+    rankBadgeEl.textContent = '';
+
+    // Submit
+    const result = await db.submitScore({
+      nickname: this.nickname || 'PILOT',
+      score:    this.score,
+      wave,
+      kills:    this.kills,
+    });
+
+    if (result) {
+      rankBadgeEl.textContent = `YOUR RANK: #${result.rank}`;
+    }
+
+    // Fetch top scores and render
+    const scores = await db.getTopScores(15);
+    this._renderLeaderboardRows(listEl, scores, this.score);
+  }
+
+  _renderLeaderboardRows(container, scores, highlightScore = null) {
+    if (!scores || scores.length === 0) {
+      container.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>';
+      return;
+    }
+
+    const medals = ['gold', 'silver', 'bronze'];
+    const rows = scores.map((row, i) => {
+      const rank      = i + 1;
+      const rankClass = medals[i] ?? '';
+      const isYou     = highlightScore !== null && row.score === highlightScore && i === scores.findIndex(s => s.score === highlightScore);
+      const date      = LeaderboardDB.formatDate(row.created_at);
+      return `
+        <div class="lb-row${isYou ? ' lb-you' : ''}">
+          <div class="lb-rank ${rankClass}">${rank <= 3 ? ['🥇','🥈','🥉'][rank-1] : rank}</div>
+          <div class="lb-name">${_escapeHtml(row.nickname)}</div>
+          <div class="lb-score">${row.score.toLocaleString()}</div>
+          <div class="lb-wave">W${row.wave}</div>
+          <div class="lb-date">${date}</div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = rows;
   }
 
   _updateMenuStats() {
@@ -1344,7 +1431,7 @@ class Game {
     });
     window.addEventListener('resize', () => this._resize());
 
-    document.getElementById('startBtn').addEventListener('click',   () => { this.audio.resume(); this._startGame(); });
+    document.getElementById('startBtn').addEventListener('click',   () => this._promptAndStart());
     document.getElementById('restartBtn').addEventListener('click', () => { this.audio.resume(); this._startGame(); });
     document.getElementById('menuBtn').addEventListener('click',    () => { this._showMenu(); this._updateMenuStats(); if(this.raf)cancelAnimationFrame(this.raf); this.raf=requestAnimationFrame(ts=>this._menuLoop(ts)); });
     document.getElementById('resumeBtn').addEventListener('click',  () => this._togglePause());
@@ -1376,6 +1463,99 @@ class Game {
 
     document.getElementById('pauseMobileBtn').addEventListener('click', () => this._togglePause());
     this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // ── Nickname modal ──────────────────────────────────────────
+    const nickInput   = document.getElementById('nicknameInput');
+    const nickError   = document.getElementById('nicknameError');
+    const nickConfirm = document.getElementById('nicknameConfirmBtn');
+    const nickCancel  = document.getElementById('nicknameCancelBtn');
+
+    // Pre-fill saved nickname
+    if (this.nickname) nickInput.value = this.nickname;
+
+    const confirmNickname = () => {
+      const val = nickInput.value.trim().toUpperCase();
+      if (val.length < 2 || val.length > 16) {
+        nickError.classList.remove('hidden');
+        nickInput.focus();
+        return;
+      }
+      nickError.classList.add('hidden');
+      this.nickname = val;
+      localStorage.setItem('apexNickname', val);
+      this.$nicknameModal.classList.add('hidden');
+      this._startGame();
+    };
+
+    nickConfirm.addEventListener('click', confirmNickname);
+    nickInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') confirmNickname();
+    });
+    nickCancel.addEventListener('click', () => {
+      this.$nicknameModal.classList.add('hidden');
+      this.$startMenu.classList.remove('hidden');
+    });
+
+    // ── Full Leaderboard screen ─────────────────────────────────
+    const openLb = () => this._openLeaderboard();
+    document.getElementById('menuLeaderboardBtn').addEventListener('click', openLb);
+    document.getElementById('closeLbBtn').addEventListener('click', () => {
+      this.$leaderboardScreen.classList.add('hidden');
+      this.$startMenu.classList.remove('hidden');
+    });
+
+    // Tab switching
+    document.querySelectorAll('.lb-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        this._loadFullLeaderboard(tab.dataset.tab);
+      });
+    });
+  }
+
+  async _openLeaderboard() {
+    this.$startMenu.classList.add('hidden');
+    this.$leaderboardScreen.classList.remove('hidden');
+    // Reset to "all" tab
+    document.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector('.lb-tab[data-tab="all"]').classList.add('active');
+    await this._loadFullLeaderboard('all');
+  }
+
+  async _loadFullLeaderboard(tab = 'all') {
+    const listEl = document.getElementById('fullLeaderboardList');
+    const db     = window.leaderboardDB;
+
+    if (!db || !db.isReady) {
+      listEl.innerHTML = `
+        <div class="lb-offline-notice" style="margin:20px">
+          ⚡ Configure Supabase in db.js to enable global rankings
+        </div>`;
+      return;
+    }
+
+    listEl.innerHTML = '<div class="lb-loading">Loading…</div>';
+
+    const scores = tab === 'today'
+      ? await db.getTodayScores(50)
+      : await db.getTopScores(50);
+
+    // Column headers
+    const header = `
+      <div class="lb-col-header">
+        <span>#</span>
+        <span>PILOT</span>
+        <span style="text-align:right">SCORE</span>
+        <span style="text-align:right">WAVE</span>
+        <span style="text-align:right">DATE</span>
+      </div>`;
+
+    listEl.innerHTML = header;
+
+    const rowsEl = document.createElement('div');
+    this._renderLeaderboardRows(rowsEl, scores, null);
+    listEl.appendChild(rowsEl);
   }
 
   // Reset all touch/keyboard input — called on blur or visibility change
@@ -1639,7 +1819,21 @@ class Game {
 }
 
 /* ══════════════════════════════════════════════════════
-   SECTION 12 — BOOTSTRAP
+   SECTION 12 — HELPERS
+   ══════════════════════════════════════════════════════ */
+
+/** Escape HTML special chars to prevent XSS in leaderboard names */
+function _escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/* ══════════════════════════════════════════════════════
+   SECTION 13 — BOOTSTRAP
    ══════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', () => {
   const game = new Game();
