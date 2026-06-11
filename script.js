@@ -2,11 +2,7 @@
    APEX STRIKER — script.js
    Complete 2D fighter jet shooter — Vanilla JS + Canvas
    ═══════════════════════════════════════════════════════════════════ */
-/*
-Created with passion and precision by slmo77x.
-© 2026 All Rights Reserved.
-A vision brought to life through code, creativity, and determination.
-*/
+
 'use strict';
 
 /* ══════════════════════════════════════════════════════
@@ -603,7 +599,9 @@ class Player {
     this.w      = 44;
     this.h      = 54;
     this.x      = canvas.width  / 2;
-    this.y      = canvas.height * 0.78;
+    // On mobile, leave room for the controls bar at the bottom (~120px)
+    const isMobile = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    this.y      = isMobile ? canvas.height * 0.68 : canvas.height * 0.78;
     this.speed  = 320;
     this.health = 100;
     this.maxHealth = 100;
@@ -631,7 +629,7 @@ class Player {
   applyPowerUp(type, duration) {
     this.powers[type] = duration;
     if (type === 'rapid')  this.fireRate = this.baseFireRate * 0.35;
-    if (type === 'shield') this.invincibleTimer = Infinity; // managed by power
+    // Shield protection is handled by isShielded getter in takeDamage — no Infinity timer needed
   }
 
   get isShielded() { return this.powers.shield > 0; }
@@ -650,14 +648,19 @@ class Player {
     if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
 
     this.x = clamp(this.x + dx * this.speed * dt, this.w / 2, this.canvas.width  - this.w / 2);
-    this.y = clamp(this.y + dy * this.speed * dt, this.h / 2, this.canvas.height - this.h / 2);
+    const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    const bottomMargin = isTouchDevice ? 140 : this.h / 2;
+    this.y = clamp(this.y + dy * this.speed * dt, this.h / 2, this.canvas.height - bottomMargin);
 
     // Tilt visually
     this.tiltX = lerp(this.tiltX, dx * 0.3, 8 * dt);
 
     // Timers
     this.shootCooldown    = Math.max(0, this.shootCooldown - dt);
-    this.invincibleTimer  = Math.max(0, this.invincibleTimer - dt);
+    // Only count down invincibleTimer when NOT shielded (shield manages it separately)
+    if (!this.isShielded) {
+      this.invincibleTimer = Math.max(0, this.invincibleTimer - dt);
+    }
     this.engineFlicker   += dt * 20;
 
     // Power-up countdowns
@@ -666,6 +669,10 @@ class Player {
         this.powers[key] = Math.max(0, this.powers[key] - dt);
         if (this.powers[key] === 0 && key === 'rapid') {
           this.fireRate = this.baseFireRate;
+        }
+        if (this.powers[key] === 0 && key === 'shield') {
+          // Shield expired — clear invincibility so hits register immediately
+          this.invincibleTimer = 0;
         }
       }
     }
@@ -1343,21 +1350,40 @@ class Game {
     document.getElementById('resumeBtn').addEventListener('click',  () => this._togglePause());
     this.$pause.addEventListener('click', e => { if(e.target===this.$pause) this._togglePause(); });
 
-    // Mobile D-pad
+    // Mobile D-pad — include touchcancel so releasing quickly never sticks
     document.querySelectorAll('.dpad-btn').forEach(btn => {
       const dir = btn.dataset.dir;
-      btn.addEventListener('touchstart', e => { e.preventDefault(); this.touchInput[dir]=true;  btn.classList.add('pressed'); }, { passive:false });
-      btn.addEventListener('touchend',   e => { e.preventDefault(); this.touchInput[dir]=false; btn.classList.remove('pressed'); }, { passive:false });
+      const press   = e => { e.preventDefault(); this.touchInput[dir]=true;  btn.classList.add('pressed');    };
+      const release = e => { e.preventDefault(); this.touchInput[dir]=false; btn.classList.remove('pressed'); };
+      btn.addEventListener('touchstart',  press,   { passive:false });
+      btn.addEventListener('touchend',    release, { passive:false });
+      btn.addEventListener('touchcancel', release, { passive:false });
     });
 
     const fireBtn = document.getElementById('fireBtn');
-    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); this.touchInput.shoot=true;  }, { passive:false });
-    fireBtn.addEventListener('touchend',   e => { e.preventDefault(); this.touchInput.shoot=false; }, { passive:false });
+    const fireOn  = e => { e.preventDefault(); this.touchInput.shoot=true;  };
+    const fireOff = e => { e.preventDefault(); this.touchInput.shoot=false; };
+    fireBtn.addEventListener('touchstart',  fireOn,  { passive:false });
+    fireBtn.addEventListener('touchend',    fireOff, { passive:false });
+    fireBtn.addEventListener('touchcancel', fireOff, { passive:false });
     fireBtn.addEventListener('mousedown',  () => this.touchInput.shoot=true);
     fireBtn.addEventListener('mouseup',    () => this.touchInput.shoot=false);
+    fireBtn.addEventListener('mouseleave', () => this.touchInput.shoot=false);
+
+    // Reset all inputs when app loses focus (tab switch, incoming call, etc.)
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this._resetTouchInput(); });
+    window.addEventListener('blur', () => this._resetTouchInput());
 
     document.getElementById('pauseMobileBtn').addEventListener('click', () => this._togglePause());
     this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+  }
+
+  // Reset all touch/keyboard input — called on blur or visibility change
+  _resetTouchInput() {
+    this.touchInput = { up:false, down:false, left:false, right:false, shoot:false };
+    this.input      = { up:false, down:false, left:false, right:false, shoot:false };
+    // Also clear any stuck dpad button visuals
+    document.querySelectorAll('.dpad-btn').forEach(b => b.classList.remove('pressed'));
   }
 
   _togglePause() {
