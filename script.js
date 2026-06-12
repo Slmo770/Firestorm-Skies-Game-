@@ -1280,9 +1280,14 @@ class Game {
     this.$hud.classList.remove('hidden');
     this.$powerupHud.classList.remove('hidden');
 
-    if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
-      this.$mobileControls.classList.remove('hidden');
-    }
+   const isMobile = ('ontouchstart' in window) ||
+                 (navigator.maxTouchPoints > 0) ||
+                 window.matchMedia('(hover: none) and (pointer: coarse)').matches ||
+                 window.innerWidth <= 900;
+
+if (isMobile) {
+  this.$mobileControls.classList.remove('hidden');
+}
 
     this.state    = 'playing';
     this.lastTime = performance.now();
